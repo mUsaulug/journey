@@ -10,33 +10,30 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import com.banking.journey.application.port.out.StateStore;
+import com.banking.journey.bootstrap.config.JourneyProperties;
 import com.banking.journey.domain.entity.CardApplicationState;
 import com.banking.journey.domain.valueobject.StateType;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * Redis implementation of the StateStore outbound port.
- * <p>
- * Key pattern: {@code journey:state:{customerId}}
- * TTL: 30 days
- * Serialization: JSON via Jackson
- * </p>
- */
 @Component
 public class RedisStateStore implements StateStore {
 
     private static final Logger log = LoggerFactory.getLogger(RedisStateStore.class);
-    private static final String KEY_PREFIX = "journey:state:";
-    private static final long STATE_TTL_DAYS = 30;
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final String keyPrefix;
+    private final long stateTtlDays;
 
-    public RedisStateStore(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
+    public RedisStateStore(StringRedisTemplate redisTemplate,
+            ObjectMapper objectMapper,
+            JourneyProperties journeyProperties) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.keyPrefix = journeyProperties.getRedis().getStatePrefix();
+        this.stateTtlDays = journeyProperties.getRedis().getStateTtlDays();
     }
 
     @Override
@@ -67,9 +64,9 @@ public class RedisStateStore implements StateStore {
         try {
             StateDto dto = StateDto.fromDomain(state);
             String json = objectMapper.writeValueAsString(dto);
-            redisTemplate.opsForValue().set(key, json, STATE_TTL_DAYS, TimeUnit.DAYS);
+            redisTemplate.opsForValue().set(key, json, stateTtlDays, TimeUnit.DAYS);
             log.debug("action=state_saved customerId={} step={} ttlDays={}",
-                    state.getCustomerId(), state.getCurrentStep(), STATE_TTL_DAYS);
+                    state.getCustomerId(), state.getCurrentStep(), stateTtlDays);
         } catch (JsonProcessingException e) {
             log.error("action=state_serialize_error customerId={} error={}",
                     state.getCustomerId(), e.getMessage());
@@ -85,14 +82,9 @@ public class RedisStateStore implements StateStore {
     }
 
     private String buildKey(String customerId) {
-        return KEY_PREFIX + customerId;
+        return keyPrefix + customerId;
     }
 
-    // ─────────────────── Inner DTO ───────────────────
-
-    /**
-     * Serialization DTO for CardApplicationState → Redis JSON.
-     */
     public static class StateDto {
 
         @JsonProperty("customer_id")
@@ -114,7 +106,7 @@ public class RedisStateStore implements StateStore {
         private Map<String, String> metadata;
 
         public StateDto() {
-        } // Jackson
+        }
 
         public static StateDto fromDomain(CardApplicationState state) {
             StateDto dto = new StateDto();
@@ -137,7 +129,6 @@ public class RedisStateStore implements StateStore {
                     metadata);
         }
 
-        // Getters/Setters for Jackson
         public String getCustomerId() {
             return customerId;
         }

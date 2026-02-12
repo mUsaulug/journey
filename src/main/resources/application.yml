@@ -91,8 +91,15 @@ journey:
       dlq: customer-events-dlq
     partitions: 10
     replication-factor: 1
+    publish-ack-timeout-ms: 3000
   redis:
     state-prefix: "journey:state:"
-    idempotency-prefix: "action:sent:"
+    idempotency-prefix: "action:status:"
     state-ttl-days: 30
     idempotency-ttl-hours: 24
+    processing-ttl-minutes: 5
+
+  required-document-count: 2
+
+  dashboard:
+    recent-actions-limit: 10
