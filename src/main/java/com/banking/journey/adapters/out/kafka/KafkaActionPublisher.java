@@ -1,7 +1,6 @@
 package com.banking.journey.adapters.out.kafka;
 
 import java.sql.Timestamp;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -11,31 +10,23 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
 import com.banking.journey.application.port.out.ActionPublisher;
+import com.banking.journey.bootstrap.config.JourneyProperties;
 import com.banking.journey.domain.entity.Action;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * Kafka + Redis implementation of the ActionPublisher outbound port.
- * <p>
- * Implements triple-write pattern:
- * <ol>
- * <li>Redis SETNX for idempotency check</li>
- * <li>Kafka publish for downstream consumers</li>
- * <li>PostgreSQL write for audit trail</li>
- * </ol>
- * </p>
- */
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 @Component
 public class KafkaActionPublisher implements ActionPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaActionPublisher.class);
-    private static final String ACTIONS_TOPIC = "actions";
-    private static final String IDEMPOTENCY_KEY_PREFIX = "action:sent:";
-    private static final long IDEMPOTENCY_TTL_HOURS = 24;
 
     private static final String INSERT_ACTION_SQL = "INSERT INTO actions (action_id, customer_id, action_type, message, channel, sent_at) "
             +
@@ -52,55 +43,74 @@ public class KafkaActionPublisher implements ActionPublisher {
     private final StringRedisTemplate redisTemplate;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final String actionsTopic;
+    private final String idempotencyPrefix;
+    private final long idempotencyTtlHours;
+    private final long processingTtlMinutes;
+    private final long publishAckTimeoutMs;
+
+    private final Counter actionPublishSuccess;
+    private final Counter actionPublishFailure;
+    private final Counter actionPublishDuplicate;
+    private final Timer actionPublishLatency;
 
     public KafkaActionPublisher(KafkaTemplate<String, String> kafkaTemplate,
             StringRedisTemplate redisTemplate,
             JdbcTemplate jdbcTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            JourneyProperties journeyProperties,
+            MeterRegistry meterRegistry) {
         this.kafkaTemplate = kafkaTemplate;
         this.redisTemplate = redisTemplate;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.actionsTopic = journeyProperties.getKafka().getTopics().getActions();
+        this.idempotencyPrefix = journeyProperties.getRedis().getIdempotencyPrefix();
+        this.idempotencyTtlHours = journeyProperties.getRedis().getIdempotencyTtlHours();
+        this.processingTtlMinutes = journeyProperties.getRedis().getProcessingTtlMinutes();
+        this.publishAckTimeoutMs = journeyProperties.getKafka().getPublishAckTimeoutMs();
+
+        this.actionPublishSuccess = meterRegistry.counter("journey.action.publish.outcome", "status", "success");
+        this.actionPublishFailure = meterRegistry.counter("journey.action.publish.outcome", "status", "failure");
+        this.actionPublishDuplicate = meterRegistry.counter("journey.action.publish.outcome", "status", "duplicate");
+        this.actionPublishLatency = meterRegistry.timer("journey.action.publish.latency");
     }
 
-    /**
-     * Publishes an action with idempotency guarantee using Redis SETNX.
-     * <p>
-     * Flow:
-     * 1. Check Redis idempotency key (SETNX atomic operation)
-     * 2. If new: publish to Kafka + persist to PostgreSQL
-     * 3. If duplicate: skip silently
-     * </p>
-     */
     @Override
     public void publish(Action action) {
-        String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + action.getActionId();
+        Timer.Sample sample = Timer.start();
+        String actionStatusKey = idempotencyPrefix + action.getActionId();
+        String processingValue = "PROCESSING";
 
-        // ── SETNX: Atomic idempotency check ──
-        Boolean isNew = redisTemplate.opsForValue()
-                .setIfAbsent(idempotencyKey, "1", IDEMPOTENCY_TTL_HOURS, TimeUnit.HOURS);
+        Boolean lockAcquired = redisTemplate.opsForValue()
+                .setIfAbsent(actionStatusKey, processingValue, processingTtlMinutes, TimeUnit.MINUTES);
 
-        if (Boolean.FALSE.equals(isNew)) {
-            log.warn("action=duplicate_action_skipped actionId={} customerId={}",
-                    action.getActionId(), action.getCustomerId());
-            return;
+        if (Boolean.FALSE.equals(lockAcquired)) {
+            String existingStatus = redisTemplate.opsForValue().get(actionStatusKey);
+            if ("DONE".equals(existingStatus)) {
+                actionPublishDuplicate.increment();
+                log.warn("action=duplicate_action_skipped actionId={} customerId={} status={}",
+                        action.getActionId(), action.getCustomerId(), existingStatus);
+                return;
+            }
+            log.warn("action=action_inflight_skipped actionId={} customerId={} status={}",
+                    action.getActionId(), action.getCustomerId(), existingStatus);
+            throw new IllegalStateException("Action publish already in progress for actionId=" + action.getActionId());
         }
 
-        // ── Publish to Kafka ──
         try {
             String actionJson = serializeAction(action);
-            kafkaTemplate.send(ACTIONS_TOPIC, action.getCustomerId(), actionJson);
-            log.info("action=action_published actionId={} customerId={} type={} channel={}",
-                    action.getActionId(), action.getCustomerId(),
-                    action.getActionType(), action.getChannel());
-        } catch (Exception e) {
-            log.error("action=kafka_publish_error actionId={} error={}",
-                    action.getActionId(), e.getMessage());
-            // Don't throw — we still want to persist the audit record
-        }
+            SendResult<String, String> sendResult = kafkaTemplate.send(actionsTopic, action.getCustomerId(), actionJson)
+                    .completable()
+                    .get(publishAckTimeoutMs, TimeUnit.MILLISECONDS);
 
-        // ── Persist to PostgreSQL (audit trail) ──
-        try {
+            log.info("action=action_published actionId={} customerId={} type={} channel={} topic={} partition={} offset={}",
+                    action.getActionId(), action.getCustomerId(),
+                    action.getActionType(), action.getChannel(),
+                    sendResult.getRecordMetadata().topic(),
+                    sendResult.getRecordMetadata().partition(),
+                    sendResult.getRecordMetadata().offset());
+
             jdbcTemplate.update(INSERT_ACTION_SQL,
                     action.getActionId(),
                     action.getCustomerId(),
@@ -109,11 +119,17 @@ public class KafkaActionPublisher implements ActionPublisher {
                     action.getChannel(),
                     Timestamp.from(action.getCreatedAt()));
 
-            log.debug("action=action_persisted actionId={}", action.getActionId());
+            redisTemplate.opsForValue().set(actionStatusKey, "DONE", idempotencyTtlHours, TimeUnit.HOURS);
+            actionPublishSuccess.increment();
+
         } catch (Exception e) {
-            log.error("action=action_persist_error actionId={} error={}",
-                    action.getActionId(), e.getMessage());
-            // Audit failure is logged but not critical
+            actionPublishFailure.increment();
+            redisTemplate.delete(actionStatusKey);
+            log.error("action=action_publish_failed actionId={} customerId={} error={}",
+                    action.getActionId(), action.getCustomerId(), e.getMessage(), e);
+            throw new RuntimeException("Action publish failed for actionId=" + action.getActionId(), e);
+        } finally {
+            sample.stop(actionPublishLatency);
         }
     }
 
@@ -126,10 +142,9 @@ public class KafkaActionPublisher implements ActionPublisher {
                         rs.getString("action_type"),
                         rs.getString("message"),
                         rs.getString("channel"),
-                        null, // campaignId not stored in table
+                        null,
                         rs.getTimestamp("sent_at").toInstant(),
-                        null // metadata not stored in table
-                ),
+                        null),
                 limit);
     }
 
@@ -138,8 +153,6 @@ public class KafkaActionPublisher implements ActionPublisher {
         Long count = jdbcTemplate.queryForObject(COUNT_ALL_SQL, Long.class);
         return count != null ? count : 0;
     }
-
-    // ─────────────────── Private Helpers ───────────────────
 
     private String serializeAction(Action action) {
         try {

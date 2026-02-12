@@ -31,7 +31,7 @@ import com.banking.journey.domain.valueobject.StateType;
 public final class CardApplicationState {
 
     /** Required number of documents to advance past DOCUMENT_PENDING */
-    private static final int REQUIRED_DOCUMENT_COUNT = 2;
+    private static volatile int REQUIRED_DOCUMENT_COUNT = 2;
 
     /** Valid state transition map: from → set of allowed to-states */
     private static final Map<StateType, Set<StateType>> VALID_TRANSITIONS;
@@ -82,6 +82,14 @@ public final class CardApplicationState {
         this.metadata = metadata != null
                 ? Collections.unmodifiableMap(metadata)
                 : Collections.emptyMap();
+    }
+
+
+    public static void configureRequiredDocumentCount(int requiredDocumentCount) {
+        if (requiredDocumentCount < 1) {
+            throw new IllegalArgumentException("requiredDocumentCount must be >= 1");
+        }
+        REQUIRED_DOCUMENT_COUNT = requiredDocumentCount;
     }
 
     // ─────────────────── Factory Methods ───────────────────
