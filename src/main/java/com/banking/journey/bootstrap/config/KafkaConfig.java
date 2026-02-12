@@ -53,7 +53,7 @@ public class KafkaConfig {
         return TopicBuilder.name(journeyProperties.getKafka().getTopics().getDlq())
                 .partitions(1)
                 .replicas(journeyProperties.getKafka().getReplicationFactor())
-                .config("retention.ms", String.valueOf(30L * 24 * 60 * 60 * 1000))
+                .config("retention.ms", String.valueOf((long) journeyProperties.getKafka().getDlqRetentionDays() * 24 * 60 * 60 * 1000))
                 .build();
     }
 
@@ -66,9 +66,9 @@ public class KafkaConfig {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 100);
-        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 300000);
-        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, journeyProperties.getKafka().getConsumerMaxPollRecords());
+        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, journeyProperties.getKafka().getConsumerMaxPollIntervalMs());
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, journeyProperties.getKafka().getConsumerSessionTimeoutMs());
         return new DefaultKafkaConsumerFactory<>(props);
     }
 

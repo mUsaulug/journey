@@ -13,6 +13,7 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import com.banking.journey.application.port.in.ProcessEventUseCase;
+import com.banking.journey.bootstrap.config.JourneyProperties;
 import com.banking.journey.domain.entity.CustomerEvent;
 import com.banking.journey.domain.valueobject.EventType;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -46,7 +47,7 @@ public class EventConsumer {
     public EventConsumer(ProcessEventUseCase processEventUseCase,
             KafkaTemplate<String, String> kafkaTemplate,
             ObjectMapper objectMapper,
-            com.banking.journey.bootstrap.config.JourneyProperties journeyProperties) {
+            JourneyProperties journeyProperties) {
         this.processEventUseCase = processEventUseCase;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;

@@ -92,6 +92,10 @@ journey:
     partitions: 10
     replication-factor: 1
     publish-ack-timeout-ms: 3000
+    dlq-retention-days: 30
+    consumer-max-poll-records: 100
+    consumer-max-poll-interval-ms: 300000
+    consumer-session-timeout-ms: 30000
   redis:
     state-prefix: "journey:state:"
     idempotency-prefix: "action:status:"
@@ -103,3 +107,4 @@ journey:
 
   dashboard:
     recent-actions-limit: 10
+    max-recent-actions-limit: 100

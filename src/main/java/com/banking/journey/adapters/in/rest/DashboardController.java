@@ -27,6 +27,7 @@ public class DashboardController {
     private final EventStore eventStore;
     private final ActionPublisher actionPublisher;
     private final int defaultRecentActionLimit;
+    private final int maxRecentActionLimit;
 
     public DashboardController(EventStore eventStore,
             ActionPublisher actionPublisher,
@@ -34,6 +35,8 @@ public class DashboardController {
         this.eventStore = eventStore;
         this.actionPublisher = actionPublisher;
         this.defaultRecentActionLimit = Math.max(1, journeyProperties.getDashboard().getRecentActionsLimit());
+        this.maxRecentActionLimit = Math.max(this.defaultRecentActionLimit,
+                journeyProperties.getDashboard().getMaxRecentActionsLimit());
     }
 
     @GetMapping("/stats")
@@ -87,6 +90,6 @@ public class DashboardController {
 
     private int normalizeLimit(Integer limit) {
         int candidate = limit != null ? limit : defaultRecentActionLimit;
-        return Math.min(Math.max(candidate, 1), 100);
+        return Math.min(Math.max(candidate, 1), maxRecentActionLimit);
     }
 }

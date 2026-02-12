@@ -34,7 +34,11 @@ public class JourneyProperties {
         private final Topics topics = new Topics();
         private int partitions = 10;
         private int replicationFactor = 1;
+        private int dlqRetentionDays = 30;
         private long publishAckTimeoutMs = 3000;
+        private int consumerMaxPollRecords = 100;
+        private int consumerMaxPollIntervalMs = 300000;
+        private int consumerSessionTimeoutMs = 30000;
 
         public Topics getTopics() {
             return topics;
@@ -54,6 +58,40 @@ public class JourneyProperties {
 
         public void setReplicationFactor(int replicationFactor) {
             this.replicationFactor = replicationFactor;
+        }
+
+
+        public int getDlqRetentionDays() {
+            return dlqRetentionDays;
+        }
+
+        public void setDlqRetentionDays(int dlqRetentionDays) {
+            this.dlqRetentionDays = dlqRetentionDays;
+        }
+
+
+        public int getConsumerMaxPollRecords() {
+            return consumerMaxPollRecords;
+        }
+
+        public void setConsumerMaxPollRecords(int consumerMaxPollRecords) {
+            this.consumerMaxPollRecords = consumerMaxPollRecords;
+        }
+
+        public int getConsumerMaxPollIntervalMs() {
+            return consumerMaxPollIntervalMs;
+        }
+
+        public void setConsumerMaxPollIntervalMs(int consumerMaxPollIntervalMs) {
+            this.consumerMaxPollIntervalMs = consumerMaxPollIntervalMs;
+        }
+
+        public int getConsumerSessionTimeoutMs() {
+            return consumerSessionTimeoutMs;
+        }
+
+        public void setConsumerSessionTimeoutMs(int consumerSessionTimeoutMs) {
+            this.consumerSessionTimeoutMs = consumerSessionTimeoutMs;
         }
 
         public long getPublishAckTimeoutMs() {
@@ -145,6 +183,7 @@ public class JourneyProperties {
 
     public static class Dashboard {
         private int recentActionsLimit = 10;
+        private int maxRecentActionsLimit = 100;
 
         public int getRecentActionsLimit() {
             return recentActionsLimit;
@@ -152,6 +191,14 @@ public class JourneyProperties {
 
         public void setRecentActionsLimit(int recentActionsLimit) {
             this.recentActionsLimit = recentActionsLimit;
+        }
+
+        public int getMaxRecentActionsLimit() {
+            return maxRecentActionsLimit;
+        }
+
+        public void setMaxRecentActionsLimit(int maxRecentActionsLimit) {
+            this.maxRecentActionsLimit = maxRecentActionsLimit;
         }
     }
 }
