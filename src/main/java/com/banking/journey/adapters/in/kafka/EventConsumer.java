@@ -13,6 +13,7 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import com.banking.journey.application.port.in.ProcessEventUseCase;
+import com.banking.journey.bootstrap.config.JourneyProperties;
 import com.banking.journey.domain.entity.CustomerEvent;
 import com.banking.journey.domain.valueobject.EventType;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -37,7 +38,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class EventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(EventConsumer.class);
-    private static final String DLQ_TOPIC = "customer-events-dlq";
+    private final String dlqTopic;
 
     private final ProcessEventUseCase processEventUseCase;
     private final KafkaTemplate<String, String> kafkaTemplate;
@@ -45,10 +46,12 @@ public class EventConsumer {
 
     public EventConsumer(ProcessEventUseCase processEventUseCase,
             KafkaTemplate<String, String> kafkaTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            JourneyProperties journeyProperties) {
         this.processEventUseCase = processEventUseCase;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
+        this.dlqTopic = journeyProperties.getKafka().getTopics().getDlq();
     }
 
     /**
@@ -141,7 +144,7 @@ public class EventConsumer {
                     Instant.now().toString());
 
             String dlqJson = objectMapper.writeValueAsString(dlqMessage);
-            kafkaTemplate.send(DLQ_TOPIC, record.key(), dlqJson);
+            kafkaTemplate.send(dlqTopic, record.key(), dlqJson);
             log.warn("action=sent_to_dlq errorType={} key={} originalTopic={}",
                     errorType, record.key(), record.topic());
         } catch (Exception dlqError) {

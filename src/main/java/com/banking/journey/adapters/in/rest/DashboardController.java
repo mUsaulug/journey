@@ -10,19 +10,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.banking.journey.application.port.out.ActionPublisher;
 import com.banking.journey.application.port.out.EventStore;
+import com.banking.journey.bootstrap.config.JourneyProperties;
 import com.banking.journey.domain.entity.Action;
 
-/**
- * REST controller for the analytics dashboard.
- * <p>
- * Provides real-time statistics and recent activity data
- * for the journey orchestration dashboard.
- * </p>
- */
 @RestController
 @RequestMapping("/dashboard")
 public class DashboardController {
@@ -31,29 +26,28 @@ public class DashboardController {
 
     private final EventStore eventStore;
     private final ActionPublisher actionPublisher;
+    private final int defaultRecentActionLimit;
+    private final int maxRecentActionLimit;
 
-    public DashboardController(EventStore eventStore, ActionPublisher actionPublisher) {
+    public DashboardController(EventStore eventStore,
+            ActionPublisher actionPublisher,
+            JourneyProperties journeyProperties) {
         this.eventStore = eventStore;
         this.actionPublisher = actionPublisher;
+        this.defaultRecentActionLimit = Math.max(1, journeyProperties.getDashboard().getRecentActionsLimit());
+        this.maxRecentActionLimit = Math.max(this.defaultRecentActionLimit,
+                journeyProperties.getDashboard().getMaxRecentActionsLimit());
     }
 
-    /**
-     * Returns dashboard statistics.
-     * <p>
-     * Response includes:
-     * - Total events count
-     * - Total actions count
-     * - Event type distribution
-     * - Recent actions (last 10)
-     * </p>
-     */
     @GetMapping("/stats")
-    public ResponseEntity<Map<String, Object>> getStats() {
+    public ResponseEntity<Map<String, Object>> getStats(
+            @RequestParam(name = "recentLimit", required = false) Integer recentLimit) {
         try {
             long totalEvents = eventStore.countAll();
             long totalActions = actionPublisher.countAll();
 
-            // Event type distribution
+            int effectiveLimit = normalizeLimit(recentLimit);
+
             List<Object[]> typeCounts = eventStore.countByEventType();
             List<Map<String, Object>> eventDistribution = typeCounts.stream()
                     .map(row -> {
@@ -64,8 +58,7 @@ public class DashboardController {
                     })
                     .collect(Collectors.toList());
 
-            // Recent actions
-            List<Action> recentActions = actionPublisher.getRecentActions(10);
+            List<Action> recentActions = actionPublisher.getRecentActions(effectiveLimit);
             List<Map<String, Object>> recentActionsList = recentActions.stream()
                     .map(action -> {
                         Map<String, Object> item = new HashMap<>();
@@ -83,14 +76,20 @@ public class DashboardController {
                     "totalEvents", totalEvents,
                     "totalActions", totalActions,
                     "eventTypeDistribution", eventDistribution,
-                    "recentActions", recentActionsList);
+                    "recentActions", recentActionsList,
+                    "recentActionsLimit", effectiveLimit);
 
             return ResponseEntity.ok(stats);
 
         } catch (Exception e) {
-            log.error("action=dashboard_stats_error error={}", e.getMessage());
+            log.error("action=dashboard_stats_error error={}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(
-                    Map.of("error", e.getMessage()));
+                    Map.of("error", "Unable to load dashboard stats"));
         }
+    }
+
+    private int normalizeLimit(Integer limit) {
+        int candidate = limit != null ? limit : defaultRecentActionLimit;
+        return Math.min(Math.max(candidate, 1), maxRecentActionLimit);
     }
 }
